@@ -1072,7 +1072,7 @@ window.dbStartPolling = function() {
         }
       });
     } catch(e) {}
-  }, 5000);
+  }, 3000);
 };
 
 // Re-render active page on remote change
@@ -1086,11 +1086,18 @@ function _dbRefreshPage(key) {
   // Always run submission checks when reports or plans change — regardless of page
   if(key==='dr_entries' || key==='daily_plans') {
     checkForNewSubmissions();
-    // Flash bell to alert TL/Admin even if not on that page
+    updateBellCount();
+    // Flash bell regardless of page
+    const bell = document.getElementById('notif-bell-wrap');
+    if(bell) { bell.style.transform='scale(1.2)'; setTimeout(()=>bell.style.transform='scale(1)',500); }
+    // If already on the page, refresh immediately
+    const activePage = document.querySelector('.page.active')?.id;
+    if(key==='dr_entries'  && activePage==='page-daily-report') refreshDRView();
+    if(key==='daily_plans' && activePage==='page-daily-plan')   refreshDPView();
+    // Show a toast so TL/Admin knows even if on another page
     if(currentRole==='tl'||currentRole==='admin') {
-      const bell = document.getElementById('notif-bell');
-      if(bell) { bell.style.transform='scale(1.4)'; setTimeout(()=>bell.style.transform='',400); }
-      updateBellCount();
+      const label = key==='dr_entries' ? '📋 New report submitted!' : '📅 New plan submitted!';
+      if(typeof toast==='function') toast(label, key==='dr_entries'?'📋':'📅');
     }
   }
   const page = document.querySelector('.page.active')?.id?.replace('page-','');
@@ -1112,7 +1119,11 @@ function _dbRefreshPage(key) {
       else if(page==='errors')          renderErrors();
       else if(page==='leave')           { renderLeave(); renderLeaveBalanceGrid(); }
       else if(page==='daily-report') {
+        // Fetch fresh data and re-render with no date filter
         refreshDRView();
+      }
+      else if(page==='daily-plan') {
+        refreshDPView();
       }
       else if(page==='daily-plan')      renderDailyPlanView();
       else if(page==='call-reports')    renderCallReports();
@@ -11024,6 +11035,9 @@ async function refreshDPView() {
       if(rows.length && Array.isArray(rows[0].val)) window._dbCache['daily_plans'] = rows[0].val;
     }
   } catch(e) {}
+  // Always clear date filter so all entries visible
+  const dateEl = document.getElementById('dp-filter-date');
+  if(dateEl && dateEl.value) dateEl.value = '';
   renderDailyPlanView();
   if(btn) { btn.textContent = '🔄 Refresh'; btn.disabled = false; }
 }
@@ -11040,6 +11054,9 @@ async function refreshDRView() {
       }
     }
   } catch(e) {}
+  // Always clear the date filter so all entries are visible
+  const dateEl = document.getElementById('dr-view-date');
+  if(dateEl && dateEl.value) dateEl.value = '';
   renderDRView();
   if(btn) { btn.textContent = '🔄 Refresh'; btn.disabled = false; }
 }
