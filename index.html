@@ -4740,105 +4740,50 @@ function renderDashPerfChart() {
 }
 
 function renderDashProdKPIs() {
+  const el  = document.getElementById('dash-prod-kpis');
+  const lbl = document.getElementById('dash-prod-date-label');
+  if(!el) return;
 
-  // Group prod data by date, last 14 days
+  // Show most recent date that has data
   const all = load('prod');
-  const byDate = {};
-  all.forEach(p => {
-    if(!byDate[p.date]) byDate[p.date] = [];
-    byDate[p.date].push(p);
-  });
-  const dates = Object.keys(byDate).sort().slice(-14);
-  if(!dates.length) {
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.font = '13px DM Sans, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('No production data yet', w/2, h/2);
+  if(!all.length) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;grid-column:span 5;text-align:center;padding:20px">No production data yet.</div>';
     return;
   }
+  const dates = [...new Set(all.map(p=>p.date))].sort();
+  const latest = dates[dates.length-1];
+  const prod = all.filter(p => p.date === latest);
 
-  const points = dates.map(d => {
-    const rows = byDate[d];
-    return {
-      date: d,
-      cases: rows.reduce((s,r) => s + (+r.cases||0), 0),
-      occ:   rows.reduce((s,r) => s + (+r.occ||0), 0) / rows.length
-    };
-  });
+  if(lbl) lbl.textContent = fmtDate(latest);
 
-  const maxCases = Math.max(...points.map(p => p.cases));
-  const pad = { top:20, right:16, bottom:38, left:56 };
-  const cw = w - pad.left - pad.right;
-  const ch = h - pad.top - pad.bottom;
-  const barW = Math.max(8, cw / points.length * 0.55);
-  const gap  = cw / points.length;
+  const totalCases  = prod.reduce((s,p) => s + (+p.cases||0), 0);
+  const avgOcc      = (prod.reduce((s,p) => s + (+p.occ||0), 0) / prod.length).toFixed(2);
+  const totalGlobal = prod.reduce((s,p) => s + (+p.globalSess||0), 0);
+  const avgAHT      = (prod.reduce((s,p) => s + (+p.aht||0), 0) / prod.length).toFixed(2);
+  const operators   = new Set(prod.map(p => p.operator)).size;
+  const occColor    = +avgOcc >= 80 ? 'var(--green)' : +avgOcc >= 70 ? 'var(--amber)' : 'var(--red)';
 
-  // Background
-  ctx.clearRect(0,0,w,h);
-
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 1;
-  [0,25,50,75,100].forEach(pct => {
-    const y = pad.top + ch - (pct/100)*ch;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left+cw, y); ctx.stroke();
-  });
-
-  // Y axis labels (cases)
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.font = `10px DM Mono, monospace`;
-  ctx.textAlign = 'right';
-  [0,0.25,0.5,0.75,1].forEach(frac => {
-    const y = pad.top + ch - frac*ch;
-    const val = Math.round(maxCases * frac);
-    ctx.fillText(val >= 1000 ? (val/1000).toFixed(0)+'k' : val, pad.left - 6, y + 3);
-  });
-
-  // Bars
-  points.forEach((p, i) => {
-    const x = pad.left + i*gap + gap/2 - barW/2;
-    const barH = (p.cases / maxCases) * ch;
-    const y = pad.top + ch - barH;
-    const occ = p.occ;
-    const col = occ >= 80 ? 'rgba(0,212,160,0.75)' : occ >= 70 ? 'rgba(255,170,68,0.75)' : 'rgba(255,94,110,0.75)';
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.roundRect(x, y, barW, barH, 3);
-    ctx.fill();
-
-    // Case count on top of bar
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '9px DM Mono, monospace';
-    ctx.textAlign = 'center';
-    const label = p.cases >= 1000 ? (p.cases/1000).toFixed(1)+'k' : p.cases;
-    ctx.fillText(label, x + barW/2, y - 4);
-
-    // X axis date label
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.font = '9px DM Sans, sans-serif';
-    const d = new Date(p.date+'T00:00:00');
-    ctx.fillText(d.getDate()+' '+ d.toLocaleString('en',{month:'short'}), x + barW/2, h - 6);
-  });
-
-  // Occupancy line
-  ctx.strokeStyle = 'rgba(255,170,68,0.9)';
-  ctx.lineWidth = 2;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const x = pad.left + i*gap + gap/2;
-    const y = pad.top + ch - (p.occ/100)*ch;
-    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-  });
-  ctx.stroke();
-
-  // Dots on line
-  ctx.fillStyle = 'rgba(255,170,68,1)';
-  points.forEach((p, i) => {
-    const x = pad.left + i*gap + gap/2;
-    const y = pad.top + ch - (p.occ/100)*ch;
-    ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
-  });
+  el.innerHTML = `
+    <div style="background:var(--surface2);border:1px solid rgba(0,212,160,0.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:22px;font-weight:900;color:var(--green);font-family:'DM Mono',monospace">${totalCases.toLocaleString()}</div>
+      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Total Cases</div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid rgba(0,180,216,0.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:22px;font-weight:900;color:${occColor};font-family:'DM Mono',monospace">${avgOcc}%</div>
+      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Avg Occupancy</div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid rgba(255,170,68,0.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:22px;font-weight:900;color:var(--amber);font-family:'DM Mono',monospace">${totalGlobal.toLocaleString()}</div>
+      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Total Global Sessions</div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid rgba(180,138,247,0.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:22px;font-weight:900;color:var(--violet);font-family:'DM Mono',monospace">${avgAHT}s</div>
+      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Avg AHT</div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid rgba(0,200,150,0.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:22px;font-weight:900;color:var(--teal);font-family:'DM Mono',monospace">${operators}</div>
+      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Operators</div>
+    </div>`;
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
