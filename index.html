@@ -1017,18 +1017,29 @@ window._pollTs    = {};
 // Write one key
 window._dbSet = async function(key, val) {
   const now = new Date().toISOString();
-  // PATCH first (update existing row) — never causes 409
+  // Step 1: Always try PATCH (works if row exists)
   let r = await fetch(_SUPA_URL+'/rest/v1/aifi_store?key=eq.'+encodeURIComponent(key),
-    {method:'PATCH', headers:_SUPA_HDR,
+    {method:'PATCH', headers:{..._SUPA_HDR,'Prefer':'return=representation'},
      body:JSON.stringify({val, updated_at:now})});
-  if(r.ok) return; // PATCH succeeded (row existed)
-  // Row didn't exist — INSERT
+  if(r.ok) {
+    const patched = await r.json();
+    if(patched && patched.length > 0) return; // Row existed and was updated
+  }
+  // Step 2: Row didn't exist — INSERT (ignore conflict just in case)
   r = await fetch(_SUPA_URL+'/rest/v1/aifi_store',
-    {method:'POST', headers:{..._SUPA_HDR,'Prefer':'return=minimal'},
+    {method:'POST',
+     headers:{..._SUPA_HDR,'Prefer':'resolution=merge-duplicates,return=minimal','Content-Type':'application/json'},
      body:JSON.stringify({key, val, updated_at:now})});
   if(!r.ok) {
     const e = await r.text();
-    console.warn('DB write failed ['+key+']:', r.status, e);
+    // If still 409, try a direct PATCH as last resort
+    if(r.status===409) {
+      await fetch(_SUPA_URL+'/rest/v1/aifi_store?key=eq.'+encodeURIComponent(key),
+        {method:'PATCH', headers:_SUPA_HDR,
+         body:JSON.stringify({val, updated_at:now})});
+    } else {
+      console.warn('DB write failed ['+key+']:', r.status, e);
+    }
   }
 };
 
@@ -11065,6 +11076,12 @@ function renderDRView() {
   const sectionF = document.getElementById('dr-view-person')?.value||'';
   const dateF    = document.getElementById('dr-view-date')?.value||'';
   let entries = load('dr_entries');
+  if(!entries || !entries.length) {
+    // Cache empty - try pulling from Supabase immediately
+    const el2 = document.getElementById('dr-view-list');
+    if(el2) el2.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px;text-align:center">Loading reports... <button onclick="refreshDRView()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Refresh</button></div>';
+    refreshDRView(); return;
+  }
   // Role-based filter
   if(currentRole === 'kings')      entries = entries.filter(e=>e.section==='kings'||e.section==='team'||!e.section);
   else if(currentRole === 'swat')  entries = entries.filter(e=>e.section==='swat'||e.section==='team'||!e.section);
@@ -11074,7 +11091,7 @@ function renderDRView() {
   entries = entries.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
 
   const el = document.getElementById('dr-view-list');
-  if(!entries.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px">No entries yet.</div>'; return; }
+  if(!entries.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px">No entries match your filter. <button onclick="document.getElementById('dr-view-date').value='';document.getElementById('dr-view-person').value='';renderDRView()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Clear filter</button></div>'; return; }
 
   const CFG = {
     kings: { label:'🔵 Team Kings QA',    color:'var(--accent)',  border:'rgba(0,212,160,0.25)' },
@@ -11474,7 +11491,7 @@ function renderDailyPlanView() {
   const TEAM_C = { tl:'var(--green)', kings:'var(--accent)', swat:'var(--orange)' };
 
   const el = document.getElementById('dp-view-list');
-  if(!plans.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px">No plans yet.</div>'; return; }
+  if(!plans.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px">No plans match your filter. <button onclick="document.getElementById('dp-filter-date').value='';document.getElementById('dp-filter-person').value='';refreshDPView()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Clear filter &amp; refresh</button></div>'; return; }
 
   el.innerHTML = keys.map(key => {
     const [person, date] = key.split('|');
