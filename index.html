@@ -4589,8 +4589,8 @@ function renderDashPerfChart() {
   const canvas = document.getElementById('dash-perf-chart');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth || 900;
-  const H = 300;
+  const W = canvas.parentElement?.offsetWidth || canvas.offsetWidth || 860;
+  const H = 240;
   canvas.width  = W * window.devicePixelRatio;
   canvas.height = H * window.devicePixelRatio;
   ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
@@ -4602,7 +4602,7 @@ function renderDashPerfChart() {
   const dates = Object.keys(byDate).sort().slice(-20);
   if(!dates.length) {
     ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
-    ctx.fillText('No production data yet — run RESTORE_AND_FIX.js', W/2, H/2); return;
+    ctx.fillText('No production data yet for this period', W/2, H/2); return;
   }
 
   const pts = dates.map(d => {
