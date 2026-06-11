@@ -11054,6 +11054,10 @@ async function saveDRSection(section) {
   if(idx>=0) all[idx]=entry; else all.push(entry);
   save('dr_entries', all);
   toast(LABELS[section]+' report saved for '+fmtDate(date),'💾');
+  // 🔔 Notify TL + Admin when a report is submitted
+  pushNotif({ id: entry.id, type:'report', person: section, notifType:'submission',
+    msg:'📋 Daily report submitted for '+(LABELS[section]||section)+' — '+fmtDate(date),
+    date, badge:'Report' });
 
   // Clear fields
   document.querySelectorAll(`[id^="${pfx}"]`).forEach(el=>{
@@ -11436,6 +11440,10 @@ async function saveDailyPlan() {
   if(idx>=0) all[idx]=entry; else all.push(entry);
   save('daily_plans', all);
   toast(NAMES[person]+' plan saved for '+fmtDate(date),'📅');
+  // 🔔 Notify TL + Admin when a plan is submitted
+  pushNotif({ id: entry.id, type:'plan', person, notifType:'submission',
+    msg:'📅 Daily plan submitted by '+(NAMES[person]||person)+' for '+fmtDate(date),
+    date, badge:'Plan' });
   document.getElementById('dp-person').value = '';
   document.getElementById('dp-date').value = '';
   document.getElementById('dp-internal-audits').value = '';
