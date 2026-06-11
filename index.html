@@ -4579,7 +4579,7 @@ function renderDashPerfChart() {
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
   const W = canvas.offsetWidth || 900;
-  const H = 240;
+  const H = 300;
   canvas.width  = W * window.devicePixelRatio;
   canvas.height = H * window.devicePixelRatio;
   ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
@@ -4588,10 +4588,10 @@ function renderDashPerfChart() {
   const all = load('prod');
   const byDate = {};
   all.forEach(p => { if(!byDate[p.date]) byDate[p.date] = []; byDate[p.date].push(p); });
-  const dates = Object.keys(byDate).sort().slice(-14);
+  const dates = Object.keys(byDate).sort().slice(-20);
   if(!dates.length) {
-    ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.font='13px sans-serif'; ctx.textAlign='center';
-    ctx.fillText('No production data yet', W/2, H/2); return;
+    ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('No production data yet — run RESTORE_AND_FIX.js', W/2, H/2); return;
   }
 
   const pts = dates.map(d => {
@@ -4650,21 +4650,48 @@ function renderDashPerfChart() {
     const x   = pad.left + i*gap + gap/2 - barW/2;
     const bH  = (p.cases/maxCases)*ch;
     const y   = pad.top+ch-bH;
-    const col = p.occ>=80?'rgba(0,212,160,0.65)':p.occ>=70?'rgba(255,170,68,0.65)':'rgba(255,94,110,0.65)';
-    ctx.fillStyle=col;
-    ctx.beginPath(); ctx.roundRect(x,y,barW,bH,3); ctx.fill();
-    // cases label
-    ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font='8px DM Mono,monospace'; ctx.textAlign='center';
-    ctx.fillText(p.cases>=1000?(p.cases/1000).toFixed(1)+'k':p.cases, x+barW/2, y-3);
+    const col = p.occ>=80?'rgba(0,212,160,0.85)':p.occ>=70?'rgba(255,170,68,0.85)':'rgba(255,94,110,0.85)';
+    // Gradient bar
+    const grad = ctx.createLinearGradient(x, y, x, y+bH);
+    grad.addColorStop(0, col);
+    grad.addColorStop(1, col.replace('0.85','0.25'));
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.roundRect(x,y,barW,bH,4); ctx.fill();
+    // Glow effect on high performers
+    if(p.occ>=85) {
+      ctx.shadowColor='rgba(0,212,160,0.4)'; ctx.shadowBlur=8;
+      ctx.fillStyle='rgba(0,212,160,0.15)';
+      ctx.beginPath(); ctx.roundRect(x-2,y-2,barW+4,bH+4,5); ctx.fill();
+      ctx.shadowBlur=0;
+    }
+    // cases label — bigger and brighter
+    ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.font='bold 9px DM Mono,monospace'; ctx.textAlign='center';
+    ctx.fillText(p.cases>=1000?(p.cases/1000).toFixed(1)+'k':p.cases, x+barW/2, y-4);
     // date label
-    ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='9px sans-serif';
+    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='bold 9px sans-serif';
     const dt=new Date(p.date+'T00:00:00');
-    ctx.fillText(dt.getDate()+' '+dt.toLocaleString('en',{month:'short'}), pad.left+i*gap+gap/2, H-6);
+    ctx.fillText(dt.getDate()+'/'+String(dt.getMonth()+1).padStart(2,'0'), pad.left+i*gap+gap/2, H-5);
   });
 
   // Helper: draw a line metric
-  const drawLine = (getValue, maxVal, color, dash=[], dotR=3) => {
-    ctx.strokeStyle=color; ctx.lineWidth=1.8; ctx.lineJoin='round';
+  // Legend
+  const legendItems = [
+    {label:'AHT A.A', color:'rgba(180,138,247,1)'},
+    {label:'Normal AHT', color:'rgba(0,200,180,1)'},
+    {label:'Occupancy %', color:'rgba(255,170,68,1)'},
+    {label:'Abandoned %', color:'rgba(255,94,110,1)'},
+  ];
+  legendItems.forEach((item,i) => {
+    const lx = pad.left + i * 110;
+    ctx.fillStyle = item.color;
+    ctx.fillRect(lx, 6, 14, 3);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(item.label, lx+18, 11);
+  });
+
+  const drawLine = (getValue, maxVal, color, dash=[], dotR=3.5) => {
+    ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.lineJoin='round';
     ctx.setLineDash(dash);
     ctx.beginPath();
     pts.forEach((p,i)=>{
@@ -4679,8 +4706,12 @@ function renderDashPerfChart() {
       const x=pad.left+i*gap+gap/2;
       const y=pad.top+ch*(1-(getValue(p)/maxVal));
       ctx.beginPath(); ctx.arc(x,y,dotR,0,Math.PI*2); ctx.fill();
-      ctx.font='8px DM Mono,monospace'; ctx.textAlign='center';
-      ctx.fillText(getValue(p), x, y-5);
+      // White ring around dot
+      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(x,y,dotR+1,0,Math.PI*2); ctx.stroke();
+      ctx.lineWidth=2.5;
+      ctx.font='bold 8px DM Mono,monospace'; ctx.textAlign='center';
+      ctx.fillText(getValue(p), x, y-7);
     });
   };
 
@@ -4797,51 +4828,6 @@ function renderDashProdKPIs() {
     const y = pad.top + ch - (p.occ/100)*ch;
     ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
   });
-}
-
-function renderDashProdKPIs() {
-  const el = document.getElementById('dash-prod-kpis');
-  const lbl = document.getElementById('dash-prod-date-label');
-  if(!el) return;
-
-  const yday = yesterday();
-  const prod = load('prod').filter(p => p.date === yday);
-
-  if(lbl) lbl.textContent = fmtDate(yday);
-
-  if(!prod.length) {
-    el.innerHTML = `<div style="color:var(--text3);font-size:12px;grid-column:span 5;text-align:center;padding:20px">No production data for ${fmtDate(yday)} yet.</div>`;
-    return;
-  }
-
-  const totalCases  = prod.reduce((s,p) => s + (+p.cases||0), 0);
-  const avgOcc      = (prod.reduce((s,p) => s + (+p.occ||0), 0) / prod.length).toFixed(2);
-  const totalGlobal = prod.reduce((s,p) => s + (+p.globalSess||0), 0);
-  const avgAHT      = (prod.reduce((s,p) => s + (+p.aht||0), 0) / prod.length).toFixed(2);
-  const operators   = new Set(prod.map(p => p.operator)).size;
-  const occColor    = +avgOcc >= 80 ? 'var(--green)' : +avgOcc >= 70 ? 'var(--amber)' : 'var(--red)';
-
-  el.innerHTML = `
-    <div style="background:var(--surface2);border:1px solid rgba(0,212,160,0.25);border-radius:10px;padding:14px;text-align:center">
-      <div style="font-size:22px;font-weight:900;color:var(--green);font-family:'DM Mono',monospace">${totalCases.toLocaleString()}</div>
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Total Cases</div>
-    </div>
-    <div style="background:var(--surface2);border:1px solid rgba(0,180,216,0.25);border-radius:10px;padding:14px;text-align:center">
-      <div style="font-size:22px;font-weight:900;color:${occColor};font-family:'DM Mono',monospace">${avgOcc}%</div>
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Avg Occupancy</div>
-    </div>
-    <div style="background:var(--surface2);border:1px solid rgba(255,170,68,0.25);border-radius:10px;padding:14px;text-align:center">
-      <div style="font-size:22px;font-weight:900;color:var(--amber);font-family:'DM Mono',monospace">${totalGlobal.toLocaleString()}</div>
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Total Global Sessions</div>
-    </div>
-    <div style="background:var(--surface2);border:1px solid rgba(180,138,247,0.25);border-radius:10px;padding:14px;text-align:center">
-      <div style="font-size:22px;font-weight:900;color:var(--violet);font-family:'DM Mono',monospace">${avgAHT}s</div>
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Avg AHT</div>
-    </div>
-    <div style="background:var(--surface2);border:1px solid rgba(0,200,150,0.25);border-radius:10px;padding:14px;text-align:center">
-      <div style="font-size:22px;font-weight:900;color:var(--teal);font-family:'DM Mono',monospace">${operators}</div>
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">Operators</div>
-    </div>`;
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
