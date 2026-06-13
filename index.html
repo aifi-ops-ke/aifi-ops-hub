@@ -11477,104 +11477,180 @@ function saveDailyAchieved() {
 }
 
 async function renderDailyPlanView() {
+  const el = document.getElementById('dp-view-list');
+  if(!el) return;
+  el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:30px;text-align:center">⏳ Loading plans...</div>';
+
   // Always fetch fresh from Supabase
-  const el0 = document.getElementById('dp-view-list');
-  if(el0) el0.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:20px;text-align:center">Loading...</div>';
   try {
     const r = await fetch(_SUPA_URL+'/rest/v1/aifi_store?select=val&key=eq.daily_plans', {headers:_SUPA_HDR});
     if(r.ok) {
       const rows = await r.json();
       if(rows.length && Array.isArray(rows[0].val)) window._dbCache['daily_plans'] = rows[0].val;
     }
-  } catch(e) {}
-  // Clear all filters — show everything by default
+  } catch(e) { console.warn('Plan fetch error:', e.message); }
+
+  // Clear date filter
   const dpDateEl = document.getElementById('dp-filter-date');
-  if(dpDateEl) dpDateEl.value = '';
+  const dateF = dpDateEl?.value || '';
+
   let all = window._dbCache['daily_plans'] || [];
-  // Role filter: kings/swat only see their own; tl/admin see ALL
-  if(currentRole==='kings')     all = all.filter(e=>e.person==='kings');
-  else if(currentRole==='swat') all = all.filter(e=>e.person==='swat');
-  // tl and admin: no filter — see Kingori, Rosemary and TL plans
 
-  // Separate plans from achieved entries
-  const plans    = all.filter(e=>!e.isAchieved);
-  const achieved = all.filter(e=>e.isAchieved);
+  // Role filter — kings/swat only see their own; TL + Admin see EVERYONE
+  if(currentRole === 'kings')     all = all.filter(e => e.person === 'kings');
+  else if(currentRole === 'swat') all = all.filter(e => e.person === 'swat');
+  // TL and Admin: show all without any filter
 
-  // Group by person+date
-  const keys = [...new Set(plans.map(p=>p.person+'|'+p.date))].sort((a,b)=>b.localeCompare(a));
-  const NAMES = { tl:'John Paul Kimongo (TL)', kings:'Kingori — Team Kings QA', swat:'Rosemary Nyaleso — Team SWAT QA' };
-  const TEAM_C = { tl:'var(--green)', kings:'var(--accent)', swat:'var(--orange)' };
+  // Date filter only if user explicitly picked one
+  if(dateF) all = all.filter(e => e.date === dateF);
 
-  const el = document.getElementById('dp-view-list');
-  if(!plans.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px">No plans match your filter. <button onclick="clearDPFilter()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Clear filter &amp; refresh</button></div>'; return; }
+  const plans    = all.filter(e => !e.isAchieved);
+  const achieved = all.filter(e =>  e.isAchieved);
 
-  el.innerHTML = keys.map(key => {
-    const [person, date] = key.split('|');
-    const plan = plans.find(p=>p.person===person&&p.date===date);
-    const ach  = achieved.find(a=>a.person===person&&a.date===date);
-    const tc   = TEAM_C[person] || 'var(--text)';
+  if(!plans.length) {
+    el.innerHTML = `<div style="color:var(--text3);font-size:13px;padding:30px;text-align:center">
+      No plans found.<br>
+      <button onclick="refreshDPView()" style="margin-top:12px;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:8px;padding:6px 16px;cursor:pointer;font-weight:700;font-size:13px">🔄 Refresh</button>
+    </div>`;
+    return;
+  }
 
-    // Audit comparison
-    const intPct  = plan.internalAudits > 0 && ach ? Math.round((ach.internalDone/plan.internalAudits)*100) : null;
-    const globPct = plan.globalAudits   > 0 && ach ? Math.round((ach.globalDone/plan.globalAudits)*100)     : null;
-    const intCol  = intPct  === null ? 'var(--text3)' : intPct  >= 100 ? 'var(--green)' : intPct  >= 70 ? 'var(--amber)' : 'var(--red)';
-    const globCol = globPct === null ? 'var(--text3)' : globPct >= 100 ? 'var(--green)' : globPct >= 70 ? 'var(--amber)' : 'var(--red)';
+  // Sort newest first
+  plans.sort((a,b) => b.date.localeCompare(a.date) || b.id - a.id);
 
-    return `<div class="card" style="margin-bottom:14px;border-color:${tc}30">
-      <!-- Header -->
+  const NAMES  = { tl:'John Paul Kimongo (TL)', kings:'Kingori — Team Kings QA', swat:'Rosemary Nyaleso — SWAT QA' };
+  const COLORS = { tl:'var(--green)', kings:'var(--accent)', swat:'var(--violet)' };
+  const isTLAdmin = currentRole==='tl'||currentRole==='admin';
+
+  el.innerHTML = plans.map(plan => {
+    const ach    = achieved.find(a => a.person===plan.person && a.date===plan.date);
+    const tc     = COLORS[plan.person] || 'var(--text)';
+    const name   = NAMES[plan.person]  || plan.person;
+
+    // Calculate scores
+    const intPct  = (plan.internalAudits > 0 && ach?.internalDone != null)
+                    ? Math.round((ach.internalDone / plan.internalAudits) * 100) : null;
+    const globPct = (plan.globalAudits > 0 && ach?.globalDone != null)
+                    ? Math.round((ach.globalDone / plan.globalAudits) * 100) : null;
+    const intCol  = intPct  == null ? 'var(--text3)' : intPct  >= 100 ? 'var(--green)' : intPct  >= 70 ? 'var(--amber)' : 'var(--red)';
+    const globCol = globPct == null ? 'var(--text3)' : globPct >= 100 ? 'var(--green)' : globPct >= 70 ? 'var(--amber)' : 'var(--red)';
+
+    // Overall score (if achieved) — average of int + glob completion
+    const scores = [intPct, globPct].filter(x => x != null);
+    const overallScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : null;
+    const scoreColor = overallScore == null ? 'var(--text3)' : overallScore >= 90 ? 'var(--green)' : overallScore >= 70 ? 'var(--amber)' : 'var(--red)';
+    const scoreLetter = overallScore == null ? '—' : overallScore >= 90 ? 'A' : overallScore >= 75 ? 'B' : overallScore >= 60 ? 'C' : 'D';
+
+    // Status colour
+    const statusBg  = plan.status==='Approved' ? 'rgba(0,212,160,0.15)' : plan.status==='Rejected' ? 'rgba(255,94,110,0.15)' : 'rgba(255,170,68,0.12)';
+    const statusCol = plan.status==='Approved' ? 'var(--green)' : plan.status==='Rejected' ? 'var(--red)' : 'var(--amber)';
+
+    // Scoring input shown only when TL/Admin approves
+    const scoreInput = isTLAdmin && plan.status !== 'Approved' && plan.status !== 'Rejected' ? `
+      <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-top:14px">
+        <div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">⭐ Score This Plan</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <label style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;display:block">Internal Audits Score (0-10)</label>
+            <input type="number" id="score-int-${plan.id}" min="0" max="10" step="0.5" placeholder="e.g. 8"
+              style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:13px"/>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;display:block">Global Audits Score (0-10)</label>
+            <input type="number" id="score-glob-${plan.id}" min="0" max="10" step="0.5" placeholder="e.g. 7"
+              style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:13px"/>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;display:block">Quality Score (0-10)</label>
+            <input type="number" id="score-qual-${plan.id}" min="0" max="10" step="0.5" placeholder="e.g. 9"
+              style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:13px"/>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;display:block">Overall Effort (0-10)</label>
+            <input type="number" id="score-effort-${plan.id}" min="0" max="10" step="0.5" placeholder="e.g. 8"
+              style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:13px"/>
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px;display:block">Feedback / Comments</label>
+          <textarea id="score-note-${plan.id}" rows="2" placeholder="Add feedback for ${name}..."
+            style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:8px;font-size:12px;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-green" style="flex:1;padding:9px" onclick="approveDPWithScore(${plan.id})">✓ Approve with Score</button>
+          <button class="btn btn-danger" style="padding:9px 16px" onclick="rejectDP(${plan.id})">✗ Reject</button>
+        </div>
+      </div>` : '';
+
+    // Show saved score if approved
+    const savedScore = (plan.status==='Approved' && plan.scores) ? `
+      <div style="background:rgba(0,212,160,0.08);border:1px solid rgba(0,212,160,0.25);border-radius:10px;padding:14px;margin-top:14px">
+        <div style="font-size:10px;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">⭐ Score Card</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
+          ${plan.scores.internal!=null?`<div style="text-align:center;background:var(--surface2);border-radius:8px;padding:8px"><div style="font-size:20px;font-weight:900;color:var(--teal)">${plan.scores.internal}/10</div><div style="font-size:9px;color:var(--text3)">INTERNAL</div></div>`:''}
+          ${plan.scores.global!=null?`<div style="text-align:center;background:var(--surface2);border-radius:8px;padding:8px"><div style="font-size:20px;font-weight:900;color:var(--violet)">${plan.scores.global}/10</div><div style="font-size:9px;color:var(--text3)">GLOBAL</div></div>`:''}
+          ${plan.scores.quality!=null?`<div style="text-align:center;background:var(--surface2);border-radius:8px;padding:8px"><div style="font-size:20px;font-weight:900;color:var(--amber)">${plan.scores.quality}/10</div><div style="font-size:9px;color:var(--text3)">QUALITY</div></div>`:''}
+          ${plan.scores.effort!=null?`<div style="text-align:center;background:var(--surface2);border-radius:8px;padding:8px"><div style="font-size:20px;font-weight:900;color:var(--accent)">${plan.scores.effort}/10</div><div style="font-size:9px;color:var(--text3)">EFFORT</div></div>`:''}
+        </div>
+        ${plan.scores.avg!=null?`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface);border-radius:8px">
+          <div style="font-size:28px;font-weight:900;color:${scoreColor};font-family:'DM Mono',monospace">${plan.scores.avg.toFixed(1)}</div>
+          <div style="font-size:32px;font-weight:900;color:${scoreColor}">${scoreLetter}</div>
+          <div style="font-size:11px;color:var(--text2)">/10 overall score</div>
+        </div>`:''}
+        ${plan.scores.note?`<div style="margin-top:10px;font-size:12px;color:var(--text2);font-style:italic;padding:8px;background:var(--surface);border-radius:8px">💬 ${plan.scores.note}</div>`:''}
+      </div>` : '';
+
+    return `<div class="card" style="margin-bottom:14px;border-left:3px solid ${tc}">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-        <div style="font-size:14px;font-weight:900;color:${tc}">${NAMES[person]||person}</div>
-        <div style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${fmtDate(date)}</div>
-        <span class="badge" style="background:${plan.status==='Approved'?'rgba(0,212,160,0.18)':plan.status==='Rejected'?'rgba(255,94,110,0.18)':'rgba(255,170,68,0.18)'};color:${plan.status==='Approved'?'var(--green)':plan.status==='Rejected'?'var(--red)':'var(--amber)'}">${plan.status||'Pending'}</span>
-        <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-          ${(currentRole==='tl'||currentRole==='admin')&&plan.status!=='Approved'&&plan.status!=='Rejected'?`
-            <button class="btn btn-green btn-sm" onclick="approveDP(${plan.id})">✓ Approve</button>
-            <button class="btn btn-danger btn-sm" onclick="rejectDP(${plan.id})">✗ Reject</button>`:''}`+
-          `${(currentRole==='tl'||currentRole==='admin')?`<button class="btn btn-danger btn-sm" onclick="deleteDP(${plan.id})">✕ Delete</button>`:''}</span>
+        <div style="font-size:14px;font-weight:900;color:${tc}">${name}</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${fmtDate(plan.date)}</div>
+        <span style="padding:3px 10px;border-radius:20px;font-size:10px;font-weight:800;background:${statusBg};color:${statusCol}">${plan.status||'Pending'}</span>
+        ${plan.scores?.avg != null ? `<span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:900;background:${statusBg};color:${scoreColor}">⭐ ${plan.scores.avg.toFixed(1)}/10 ${scoreLetter}</span>` : ''}
+        ${isTLAdmin ? `<button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="deleteDP(${plan.id})">✕</button>` : ''}
       </div>
 
-      <!-- Plan + Achieved side by side -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-
-        <!-- PLAN -->
-        <div style="background:var(--surface2);border-radius:10px;padding:14px;border:1px solid var(--border2)">
-          <div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">📅 Plan</div>
+        <div style="background:var(--surface2);border-radius:10px;padding:14px">
+          <div style="font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;margin-bottom:10px">📅 Plan for the day</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
             <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px">
-              <div style="font-size:22px;font-weight:900;color:var(--teal);font-family:'DM Mono',monospace">${plan.internalAudits||0}</div>
-              <div style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-top:3px">Internal Audits</div>
+              <div style="font-size:22px;font-weight:900;color:var(--teal)">${plan.internalAudits||0}</div>
+              <div style="font-size:9px;color:var(--text3);margin-top:3px">INTERNAL AUDITS</div>
             </div>
             <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px">
-              <div style="font-size:22px;font-weight:900;color:var(--violet);font-family:'DM Mono',monospace">${plan.globalAudits||0}</div>
-              <div style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-top:3px">Global Audits</div>
+              <div style="font-size:22px;font-weight:900;color:var(--violet)">${plan.globalAudits||0}</div>
+              <div style="font-size:9px;color:var(--text3);margin-top:3px">GLOBAL AUDITS</div>
             </div>
           </div>
-          <div style="font-size:12px;color:var(--text);line-height:1.7;white-space:pre-wrap">${plan.objectives||'No plan text.'}</div>
+          <div style="font-size:12px;color:var(--text);line-height:1.7;white-space:pre-wrap">${plan.objectives||'—'}</div>
         </div>
 
-        <!-- ACHIEVED -->
         <div style="background:var(--surface2);border-radius:10px;padding:14px;border:1px solid ${ach?'rgba(0,212,160,0.25)':'var(--border2)'}">
-          <div style="font-size:10px;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">✅ Achieved</div>
+          <div style="font-size:10px;font-weight:800;color:var(--green);text-transform:uppercase;margin-bottom:10px">✅ End of day achieved</div>
           ${ach ? `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-            <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px;border:1px solid ${intCol}44">
-              <div style="font-size:22px;font-weight:900;color:${intCol};font-family:'DM Mono',monospace">${ach.internalDone||0}</div>
-              <div style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-top:3px">Internal Done</div>
-              ${intPct !== null ? `<div style="font-size:10px;font-weight:800;color:${intCol};margin-top:2px">${intPct}%</div>` : ''}
+            <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px;border:1px solid ${intCol}55">
+              <div style="font-size:22px;font-weight:900;color:${intCol}">${ach.internalDone||0}</div>
+              <div style="font-size:9px;color:var(--text3);margin-top:3px">INTERNAL DONE</div>
+              ${intPct!=null?`<div style="font-size:11px;font-weight:800;color:${intCol};margin-top:3px">${intPct}%</div>`:''}
             </div>
-            <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px;border:1px solid ${globCol}44">
-              <div style="font-size:22px;font-weight:900;color:${globCol};font-family:'DM Mono',monospace">${ach.globalDone||0}</div>
-              <div style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-top:3px">Global Done</div>
-              ${globPct !== null ? `<div style="font-size:10px;font-weight:800;color:${globCol};margin-top:2px">${globPct}%</div>` : ''}
+            <div style="text-align:center;background:var(--surface);border-radius:8px;padding:10px;border:1px solid ${globCol}55">
+              <div style="font-size:22px;font-weight:900;color:${globCol}">${ach.globalDone||0}</div>
+              <div style="font-size:9px;color:var(--text3);margin-top:3px">GLOBAL DONE</div>
+              ${globPct!=null?`<div style="font-size:11px;font-weight:800;color:${globCol};margin-top:3px">${globPct}%</div>`:''}
             </div>
           </div>
           <div style="font-size:12px;color:var(--text);line-height:1.7;white-space:pre-wrap">${ach.achievedNotes||''}</div>
-          ` : `<div style="color:var(--text3);font-size:12px;font-style:italic;padding:8px 0">Not filled in yet — update at end of shift.</div>`}
+          ` : '<div style="color:var(--text3);font-size:12px;font-style:italic">Not filled in yet.</div>'}
         </div>
       </div>
+
+      ${scoreInput}
+      ${savedScore}
     </div>`;
   }).join('');
 }
+
 
 
 // ════════════════════════════════════════════════════════════════
@@ -11785,19 +11861,65 @@ function initMgmtShifts() {
   renderMgmtShiftCalendar();
 }
 
+function approveDPWithScore(id) {
+  const a = load('daily_plans');
+  const e = a.find(x => x.id === id);
+  if(!e) return;
+
+  const intV    = parseFloat(document.getElementById('score-int-'+id)?.value);
+  const globV   = parseFloat(document.getElementById('score-glob-'+id)?.value);
+  const qualV   = parseFloat(document.getElementById('score-qual-'+id)?.value);
+  const effortV = parseFloat(document.getElementById('score-effort-'+id)?.value);
+  const note    = document.getElementById('score-note-'+id)?.value || '';
+
+  // Build scores object — only include filled fields
+  const scores = {};
+  if(!isNaN(intV))    scores.internal = Math.min(10, Math.max(0, intV));
+  if(!isNaN(globV))   scores.global   = Math.min(10, Math.max(0, globV));
+  if(!isNaN(qualV))   scores.quality  = Math.min(10, Math.max(0, qualV));
+  if(!isNaN(effortV)) scores.effort   = Math.min(10, Math.max(0, effortV));
+  if(note) scores.note = note;
+
+  // Calculate average of provided scores
+  const vals = [scores.internal, scores.global, scores.quality, scores.effort].filter(v => v != null);
+  if(vals.length) scores.avg = +(vals.reduce((a,b)=>a+b,0) / vals.length).toFixed(2);
+
+  e.status = 'Approved';
+  e.scores = scores;
+  e.approvedBy = currentName || currentRole;
+  e.approvedAt = new Date().toISOString();
+
+  save('daily_plans', a);
+  if(typeof pushFeedbackNotif === 'function') pushFeedbackNotif(e, 'plan', 'Approved');
+  renderDailyPlanView();
+  const grade = scores.avg != null ? ` — Score: ${scores.avg.toFixed(1)}/10` : '';
+  toast('Plan approved' + grade, '✅');
+}
+
 function approveDP(id) {
-  const a=load('daily_plans'), e=a.find(x=>x.id===id); if(!e) return;
-  e.status='Approved'; recalcPlanScore(e,a,'Approved'); save('daily_plans',a);
-  pushFeedbackNotif(e,'plan','Approved');
+  // Quick approve without score
+  const a = load('daily_plans'), e = a.find(x=>x.id===id); if(!e) return;
+  e.status = 'Approved';
+  e.approvedBy = currentName || currentRole;
+  e.approvedAt = new Date().toISOString();
+  save('daily_plans', a);
+  if(typeof pushFeedbackNotif === 'function') pushFeedbackNotif(e, 'plan', 'Approved');
   renderDailyPlanView(); toast('Plan approved ✓','✅');
 }
+
 function rejectDP(id) {
-  const a=load('daily_plans'), e=a.find(x=>x.id===id); if(!e) return;
-  e.status='Rejected'; recalcPlanScore(e,a,'Rejected'); save('daily_plans',a);
-  pushFeedbackNotif(e,'plan','Rejected');
+  const a = load('daily_plans'), e = a.find(x=>x.id===id); if(!e) return;
+  e.status = 'Rejected';
+  e.rejectedBy = currentName || currentRole;
+  save('daily_plans', a);
+  if(typeof pushFeedbackNotif === 'function') pushFeedbackNotif(e, 'plan', 'Rejected');
   renderDailyPlanView(); toast('Plan rejected','❌');
 }
-function deleteDP(id) { save('daily_plans',load('daily_plans').filter(e=>e.id!==id));renderDailyPlanView(); }
+
+function deleteDP(id) {
+  save('daily_plans', load('daily_plans').filter(e=>e.id!==id));
+  renderDailyPlanView();
+}
 
 // ════════════════════════════════════════════════════════════════
 // TEAM PERFORMANCE TRACKER
