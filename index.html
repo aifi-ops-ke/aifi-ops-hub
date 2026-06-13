@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html><!-- AIFI Hub v20260613_124801 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -11514,7 +11514,7 @@ async function renderDailyPlanView() {
   const TEAM_C = { tl:'var(--green)', kings:'var(--accent)', swat:'var(--orange)' };
 
   const el = document.getElementById('dp-view-list');
-  if(!plans.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px">No plans match your filter. <button onclick="document.getElementById('dp-filter-date').value='';document.getElementById('dp-filter-person').value='';refreshDPView()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Clear filter &amp; refresh</button></div>'; return; }
+  if(!plans.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:20px">No plans match your filter. <button onclick="clearDPFilter()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-weight:700">Clear filter &amp; refresh</button></div>'; return; }
 
   el.innerHTML = keys.map(key => {
     const [person, date] = key.split('|');
@@ -12839,6 +12839,24 @@ window.dbInit().then(() => {
   renderDashProdKPIs();
   renderDashPerfChart();
 }).catch(() => checkSession());
+
+// ── Filter clear helpers (avoids quote-escaping issues in innerHTML) ──
+function clearDPFilter() {
+  const d = document;
+  const df = d.getElementById('dp-filter-date');
+  const pf = d.getElementById('dp-filter-person');
+  if(df) df.value = '';
+  if(pf) pf.value = '';
+  refreshDPView();
+}
+function clearDRFilter() {
+  const d = document;
+  const df = d.getElementById('dr-view-date');
+  const pf = d.getElementById('dr-view-person');
+  if(df) df.value = '';
+  if(pf) pf.value = '';
+  renderDRView();
+}
 </script>
 </body>
 </html>
