@@ -11077,19 +11077,20 @@ async function renderDRView() {
     }
   } catch(e) {}
 
-  const sectionF = document.getElementById('dr-view-person')?.value||'';
-  // NEVER auto-filter by date — only filter if user explicitly picked a date
-  const dateEl = document.getElementById('dr-view-date');
-  const dateF  = ''; // Always show all dates by default
-  if(dateEl) dateEl.value = ''; // Clear any stale date filter
+  // Clear ALL filters on load — show everything
+  const dateEl    = document.getElementById('dr-view-date');
+  const sectionEl = document.getElementById('dr-view-person');
+  if(dateEl)    dateEl.value    = '';
+  if(sectionEl) sectionEl.value = '';
+  const sectionF = ''; // Never auto-filter
+  const dateF    = ''; // Never auto-filter
 
   let entries = window._dbCache['dr_entries'] || [];
 
-  // Role-based filter
+  // Role-based filter only
   if(currentRole === 'kings')     entries = entries.filter(e=>e.section==='kings'||e.section==='team'||!e.section);
   else if(currentRole === 'swat') entries = entries.filter(e=>e.section==='swat'||e.section==='team'||!e.section);
-  // tl and admin see ALL sections
-  if(sectionF) entries = entries.filter(e=>e.section===sectionF);
+  // tl and admin see EVERYTHING — all sections, all names
   entries = entries.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
 
   if(!entries.length){
