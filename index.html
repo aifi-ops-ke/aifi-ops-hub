@@ -6220,7 +6220,8 @@ function applyRoleRestrictions(role) {
   // Pages Rosemary (swat) can access
   const swatPages   = ['dashboard','team-dash-swat','daily-report','daily-plan',
     'attendance','attendance-full','production','errors','leave','schedule',
-    'call-reports','team-dash','team-perf-kings','team-perf-swat'];
+    'call-reports','team-dash','team-perf-kings','team-perf-swat',
+    'wfh','wfh-operator'];
 
   const allowedPages = role==='kings' ? kingsPages : swatPages;
 
@@ -6237,17 +6238,7 @@ function applyRoleRestrictions(role) {
     }
   });
 
-  // WFH: only Kingori has access — hide for Rosemary
-  if(role === 'swat') {
-    document.querySelectorAll('.nav-item').forEach(item => {
-      const onclick = item.getAttribute('onclick') || '';
-      if(onclick.includes("'wfh'") || onclick.includes("'wfh-operator'")) {
-        item.style.opacity = '0.3';
-        item.style.pointerEvents = 'none';
-        item.title = 'Kings QA access only';
-      }
-    });
-  }
+  // WFH: both Kingori and Rosemary have access
 }
 
 function confirmLogout() {
@@ -10853,38 +10844,24 @@ function applyDRRoleVisibility() {
   const teamSection  = document.getElementById('dr-section-team');
   const teamNote     = document.getElementById('dr-team-tl-note');
 
-  if(currentRole === 'kings') {
-    // Kingori: Kings section + Whole Team as backup (TL absent cover)
-    if(kingsSection) kingsSection.style.display = 'block';
-    if(swatSection)  swatSection.style.display  = 'none';
-    if(teamSection)  teamSection.style.display  = 'block';
-    if(teamNote)     teamNote.style.display      = 'block';
-  } else if(currentRole === 'swat') {
-    // Rosemary: SWAT section only — no Whole Team
-    if(kingsSection) kingsSection.style.display = 'none';
-    if(swatSection)  swatSection.style.display  = 'block';
-    if(teamSection)  teamSection.style.display  = 'none';
-    if(teamNote)     teamNote.style.display      = 'none';
-  } else if(currentRole === 'admin') {
-    if(kingsSection) kingsSection.style.display = 'block';
-    if(swatSection)  swatSection.style.display  = 'block';
-    if(teamSection)  teamSection.style.display  = 'block';
-    if(teamNote)     teamNote.style.display      = 'none';
-  } else {
-    // TL — Whole Team section only
-    if(kingsSection) kingsSection.style.display = 'none';
-    if(swatSection)  swatSection.style.display  = 'none';
-    if(teamSection)  teamSection.style.display  = 'block';
-    if(teamNote)     teamNote.style.display      = 'none';
-  }
+  // Default: hide all
+  if(kingsSection) kingsSection.style.display = 'none';
+  if(swatSection)  swatSection.style.display  = 'none';
+  if(teamSection)  teamSection.style.display  = 'none';
+  if(teamNote)     teamNote.style.display     = 'none';
 
-  // Filter the view-tab section dropdown
-  const viewSelect = document.getElementById('dr-view-person');
-  if(viewSelect) {
-    Array.from(viewSelect.options).forEach(opt => {
-      if(currentRole === 'swat') opt.hidden = opt.value !== '' && opt.value !== 'swat';
-      else                       opt.hidden = false; // TL, Kings, Admin see all
-    });
+  if(currentRole === 'kings') {
+    // Kingori: ONLY Kings section — cannot see SWAT or Whole Team
+    if(kingsSection) kingsSection.style.display = 'block';
+  } else if(currentRole === 'swat') {
+    // Rosemary: ONLY SWAT section — cannot see Kings or Whole Team
+    if(swatSection) swatSection.style.display = 'block';
+  } else {
+    // TL and Admin: see ALL sections
+    if(kingsSection) kingsSection.style.display = 'block';
+    if(swatSection)  swatSection.style.display  = 'block';
+    if(teamSection)  teamSection.style.display  = 'block';
+    if(teamNote)     teamNote.style.display     = 'block';
   }
 }
 
@@ -11038,10 +11015,16 @@ async function renderDRView() {
 
   let entries = window._dbCache['dr_entries'] || [];
 
-  // Role-based filter only
-  if(currentRole === 'kings')     entries = entries.filter(e=>e.section==='kings'||e.section==='team'||!e.section);
-  else if(currentRole === 'swat') entries = entries.filter(e=>e.section==='swat'||e.section==='team'||!e.section);
-  // tl and admin see EVERYTHING — all sections, all names
+  // Role-based filter — STRICT:
+  // Kingori (kings) → ONLY sees his own kings reports
+  // Rosemary (swat) → ONLY sees her own swat reports
+  // TL + Admin      → see ALL reports from everyone
+  if(currentRole === 'kings') {
+    entries = entries.filter(e => e.section === 'kings');
+  } else if(currentRole === 'swat') {
+    entries = entries.filter(e => e.section === 'swat');
+  }
+  // tl and admin: no filter
   entries = entries.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
 
   if(!entries.length){
@@ -11447,10 +11430,16 @@ async function renderDailyPlanView() {
 
   let all = window._dbCache['daily_plans'] || [];
 
-  // Role filter — kings/swat only see their own; TL + Admin see EVERYONE
-  if(currentRole === 'kings')     all = all.filter(e => e.person === 'kings');
-  else if(currentRole === 'swat') all = all.filter(e => e.person === 'swat');
-  // TL and Admin: show all without any filter
+  // Role filter — STRICT:
+  // Kingori (kings) → ONLY sees his own plans
+  // Rosemary (swat) → ONLY sees her own plans
+  // TL + Admin      → see ALL plans from everyone
+  if(currentRole === 'kings') {
+    all = all.filter(e => e.person === 'kings');
+  } else if(currentRole === 'swat') {
+    all = all.filter(e => e.person === 'swat');
+  }
+  // TL and Admin: no filter — see everything
 
   // Date filter only if user explicitly picked one
   if(dateF) all = all.filter(e => e.date === dateF);
