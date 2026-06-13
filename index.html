@@ -7587,8 +7587,12 @@ function renderWFHMonitor() {
     if(s.checkOut)              return 'logged_out';
     if(s.status === 'logged_out') return 'logged_out';
     if(s.status === 'offline')  return 'logged_out';
-    if(s.status === 'break')    return 'break';
-    if(s.status === 'idle')     return 'idle';
+    if(s.status === 'break')         return 'break';
+    if(s.status === 'lunch')         return 'break';
+    if(s.status === 'meeting')       return 'meeting';
+    if(s.status === 'floor_support') return 'online';
+    if(s.status === 'training')      return 'online';
+    if(s.status === 'idle')          return 'idle';
     // Heartbeat stale check — no ping in 5+ min = not actually online
     if(s.lastHeartbeat) {
       const mins = (Date.now() - new Date(s.lastHeartbeat).getTime()) / 60000;
@@ -7611,12 +7615,12 @@ function renderWFHMonitor() {
   const totalIssues = logs.filter(l=>l.tool&&l.tool!=='ok').length;
   const kpiEl = document.getElementById('wfh-kpi-row');
   if(kpiEl) kpiEl.innerHTML = `
-    <div class="kpi-card green"><div class="kpi-label">Online</div><div class="kpi-value">${onlineOps.length}</div><div class="kpi-sub">Active now</div></div>
-    <div class="kpi-card amber"><div class="kpi-label">On Break</div><div class="kpi-value">${breakOps.length}</div></div>
-    <div class="kpi-card red"><div class="kpi-label">Idle ⚠️</div><div class="kpi-value">${idleOps.length}</div><div class="kpi-sub">>60 min no update</div></div>
-    <div class="kpi-card"><div class="kpi-label">Checked Out</div><div class="kpi-value">${offOps.length}</div></div>
-    <div class="kpi-card teal"><div class="kpi-label">Remote Cases</div><div class="kpi-value">${totalCases.toLocaleString()}</div></div>
-    <div class="kpi-card purple"><div class="kpi-label">Avg Compliance</div><div class="kpi-value">${avgScore}%</div></div>
+    <div class="kpi-card green"><div class="kpi-label">🟢 Working</div><div class="kpi-value">${onlineOps.length}</div><div class="kpi-sub">Active now</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">☕ On Break</div><div class="kpi-value">${breakOps.length}</div><div class="kpi-sub">Break/Lunch</div></div>
+    <div class="kpi-card teal"><div class="kpi-label">📹 Meeting</div><div class="kpi-value">${allOps.filter(id=>opStatus(id)==='meeting').length}</div><div class="kpi-sub">In meeting</div></div>
+    <div class="kpi-card red"><div class="kpi-label">💤 Idle ⚠️</div><div class="kpi-value">${idleOps.length}</div><div class="kpi-sub">>5 min no update</div></div>
+    <div class="kpi-card"><div class="kpi-label">✅ Checked Out</div><div class="kpi-value">${offOps.length}</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">📦 Remote Cases</div><div class="kpi-value">${totalCases.toLocaleString()}</div></div>
   `;
 
   // Compliance alerts
@@ -7644,7 +7648,11 @@ function renderWFHMonitor() {
   if(!gridOps.length) {
     gridEl.innerHTML = '<div style="color:var(--text3);font-size:12px;grid-column:span 4">No operators checked in yet. Operators need to open the WFH Operator Portal on their machine and click Check In.</div>';
   } else {
-    const statusLabel = {online:'🟢 Online',break:'☕ On Break',idle:'🔴 Idle',offline:'⚫ Offline'};
+    const statusLabel = {
+    online:'🟢 Working', break:'☕ On Break', meeting:'📹 In Meeting',
+    idle:'💤 Idle', offline:'⚫ Offline', floor_support:'🤝 Floor Support',
+    training:'📚 Training', lunch:'🍽️ Lunch Break'
+  };
     gridEl.innerHTML = gridOps.map(id => {
       const sess   = sessions[id];
       const status = opStatus(id);
@@ -9254,20 +9262,58 @@ const STATUS_CONFIG = {
 
 // ── Supabase helpers ─────────────────────────────────────────────
 async function dbSetStatus(opId, status, note) {
+  const now = new Date().toISOString();
+  const payload = {
+    op_id: opId, date: today(), status, status_note: note||null,
+    started_at: now, updated_at: now
+  };
   try {
+    // Save to wfh_status table (status board)
     const r = await fetch(_SUPA_URL + '/rest/v1/wfh_status', {
       method: 'POST',
       headers: { 'apikey':_SUPA_KEY, 'Authorization':'Bearer '+_SUPA_KEY,
                  'Content-Type':'application/json',
                  'Prefer':'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify({
-        op_id: opId, date: today(), status, status_note: note||null,
-        started_at: new Date().toISOString(), updated_at: new Date().toISOString()
-      })
+      body: JSON.stringify(payload)
     });
     if(!r.ok) console.error('Status save failed:', r.status, await r.text());
     else console.log('✅ Status saved:', status);
   } catch(e) { console.error('Status save error:', e); }
+
+  // ALSO update wfh_sessions so WFH Monitor shows real-time status
+  try {
+    // Map operator statuses to session statuses
+    const sessStatus = {
+      working:'online', meeting:'meeting', break:'break',
+      lunch:'break', floor_support:'floor_support', training:'training'
+    }[status] || status;
+
+    await fetch(
+      _SUPA_URL + '/rest/v1/wfh_sessions?op_id=eq.' + encodeURIComponent(opId) + '&date=eq.' + today(),
+      {
+        method: 'PATCH',
+        headers: { 'apikey':_SUPA_KEY, 'Authorization':'Bearer '+_SUPA_KEY,
+                   'Content-Type':'application/json', 'Prefer':'return=minimal' },
+        body: JSON.stringify({
+          status: sessStatus,
+          last_heartbeat: now,
+          updated_at: now
+        })
+      }
+    );
+  } catch(e) { console.warn('Session status update failed:', e.message); }
+
+  // Update local session cache immediately so monitor refreshes
+  const sess = getSession(today(), opId);
+  if(sess) {
+    const sessStatus = {
+      working:'online', meeting:'meeting', break:'break',
+      lunch:'break', floor_support:'floor_support', training:'training'
+    }[status] || status;
+    sess.status = sessStatus;
+    sess.lastHeartbeat = now;
+    saveSession(today(), opId, sess);
+  }
 }
 
 async function dbGetOpStatus(opId) {
