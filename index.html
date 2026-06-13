@@ -6023,13 +6023,9 @@ const DEFAULT_CREDS = {
   swat:   { hash: btoa('Swat@Ros2026!'),      name: 'Rosemary Nyaleso',  role: 'SWAT QA',    icon: '🟣', badge: 'swat'  },
 };
 
-// Load saved custom passwords (if user changed them), else use defaults
+// Always use DEFAULT_CREDS — passwords are fixed and defined here
 function getCreds() {
-  const saved = loadObj('creds');
-  return Object.keys(DEFAULT_CREDS).reduce((acc, key) => {
-    acc[key] = { ...DEFAULT_CREDS[key], hash: saved[key] || DEFAULT_CREDS[key].hash };
-    return acc;
-  }, {});
+  return { ...DEFAULT_CREDS };
 }
 
 let selectedRole = 'tl';
