@@ -11487,16 +11487,14 @@ async function renderDailyPlanView() {
       if(rows.length && Array.isArray(rows[0].val)) window._dbCache['daily_plans'] = rows[0].val;
     }
   } catch(e) {}
+  // Clear all filters — show everything by default
   const dpDateEl = document.getElementById('dp-filter-date');
   if(dpDateEl) dpDateEl.value = '';
-  const personF = document.getElementById('dp-filter-person')?.value||'';
-  const dateF   = '';
   let all = window._dbCache['daily_plans'] || [];
-  if(currentRole==='kings') all = all.filter(e=>e.person==='kings');
+  // Role filter: kings/swat only see their own; tl/admin see ALL
+  if(currentRole==='kings')     all = all.filter(e=>e.person==='kings');
   else if(currentRole==='swat') all = all.filter(e=>e.person==='swat');
-  // tl/admin see all
-  if(personF) all = all.filter(e=>e.person===personF);
-  if(dateF)   all = all.filter(e=>e.date===dateF);
+  // tl and admin: no filter — see Kingori, Rosemary and TL plans
 
   // Separate plans from achieved entries
   const plans    = all.filter(e=>!e.isAchieved);
