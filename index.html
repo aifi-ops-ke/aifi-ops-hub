@@ -7088,29 +7088,36 @@ async function dbGetLogs(date) {
       {headers:{...WFH_HDR,'Prefer':''}});
     const rows = await r.json();
     if(!Array.isArray(rows)) return [];
-    return rows.map(row=>({
-      id:       row.id,
-      date:     row.date,
-      opId:     row.op_id,
-      name:     operatorLabel(row.op_id),
-      timeStr:  new Date(row.logged_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),
-      isoTime:  row.logged_at,
-      type:     row.log_type,
-      cases:    row.cases||0,
-      aht:      row.aht,
-      occ:      row.occ,
-      activity: row.activity,
-      tool:     row.tool,
-      net:      row.net,
-      env:      row.env,
-      focus:    row.focus,
-      energy:   row.energy,
-      proof:    row.proof,
-      notes:    row.notes,
-      flags:    row.flags,
-      location: row.location,
-      device:   row.device,
-    }));
+    return rows.map(row=>{
+      // Normalize: extension uses 'note','tool','is_eod' — hub uses 'log_type','notes'
+      const logType = row.log_type || (row.is_eod?'eod': row.tool==='tab_switch'?'tab_switch': row.tool==='checkin'?'checkin': 'submission');
+      const notes   = row.notes || row.note || '';
+      // Determine label from tool/type
+      const toolLabel = row.tool && row.tool !== 'dat.aifi.com' ? ` [${row.tool}]` : '';
+      return {
+        id:       row.id,
+        date:     row.date,
+        opId:     row.op_id,
+        name:     operatorLabel(row.op_id),
+        timeStr:  new Date(row.logged_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),
+        isoTime:  row.logged_at,
+        type:     logType,
+        cases:    row.cases||0,
+        aht:      row.aht,
+        occ:      row.occ||row.occupancy,
+        activity: row.activity,
+        tool:     row.tool,
+        net:      row.net||row.internet,
+        env:      row.env,
+        focus:    row.focus,
+        energy:   row.energy,
+        proof:    row.proof,
+        notes:    notes + toolLabel,
+        flags:    row.flags,
+        location: row.location,
+        device:   row.device,
+      };
+    });
   } catch(e) { return load(WFH_LOGS_KEY)||[]; }
 }
 async function dbInsertLog(opId, type, data={}) {
@@ -9380,7 +9387,11 @@ async function renderStatusBoard() {
   const summary = document.getElementById('status-summary');
   if(!grid) return;
 
-  const checkedIn = approved.filter(id => sessions[id]?.checkIn && !sessions[id]?.checkOut);
+  // Show ALL operators with sessions — approved AND extension-registered
+  const sessionOps  = Object.keys(sessions).filter(id => sessions[id]?.checkIn && !sessions[id]?.checkOut);
+  const approvedIn  = approved.filter(id => sessions[id]?.checkIn && !sessions[id]?.checkOut);
+  // Merge: show approved first, then others with active sessions
+  const checkedIn   = [...new Set([...approvedIn, ...sessionOps])];
 
   if(!checkedIn.length) {
     grid.innerHTML = '<div style="color:var(--text3);font-size:12px;grid-column:span 6;text-align:center;padding:16px">No operators checked in yet.</div>';
