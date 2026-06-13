@@ -3385,7 +3385,16 @@ alfred.korir.impact.nbo&#9;Associate&#9;17.98&#9;12.65&#9;20.94&#9;0.15%&#9;7.98
       <!-- Full audit log -->
       <div class="card" style="padding:0;overflow:hidden">
         <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-          <div class="card-title">🗂️ Full Audit Log</div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div class="card-title">🗂️ Full Audit Log</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3)">
+              From time: <input type="time" id="wfh-audit-from" value="18:00"
+                onchange="renderWFHMonitor()"
+                style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:6px;font-size:11px;width:90px"/>
+              <button onclick="document.getElementById('wfh-audit-from').value='00:00';renderWFHMonitor()"
+                style="padding:3px 8px;background:var(--surface2);border:1px solid var(--border2);color:var(--text3);border-radius:6px;font-size:10px;cursor:pointer">All day</button>
+            </div>
+          </div
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary btn-sm" onclick="exportWFHLog()">↓ Export CSV</button>
             <button class="btn btn-danger btn-sm" onclick="if(confirm('Clear today WFH data?')){clearWFHDay();}">🗑 Clear Day</button>
@@ -4500,11 +4509,13 @@ function nav(page) {
   if(page==='call-reports') { renderCallReports(); }
   if(page==='team-dash') { initTeamDash(); }
   if(page==='daily-report') {
-    // Clear date filter so ALL reports are visible (not filtered to today)
+    // Clear date filter so ALL reports are visible
     const drDate = document.getElementById('dr-view-date');
     if(drDate) drDate.value = '';
     applyDRRoleVisibility();
     refreshDRView();
+    // Auto-fill today's production data into the form
+    setTimeout(() => autoFillDRFromProd(), 500);
   }
   if(page==='daily-plan') {
     // Clear date filter so ALL plans are visible
@@ -7760,10 +7771,20 @@ function renderWFHMonitor() {
   // Full audit log table
   const fullTbody = document.getElementById('wfh-full-log-tbody');
   const typeColors={checkin:'badge-green',checkout:'badge-red',hourly:'badge-blue',eod:'badge-purple',break:'badge-amber',resume:'badge-teal',idle:'badge-red'};
-  if(!logs.length) {
-    fullTbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3)">No entries.</td></tr>';
+  // Apply time filter — default shows from 18:00
+  const auditFromTime = document.getElementById('wfh-audit-from')?.value || '';
+  const filteredLogs = auditFromTime
+    ? logs.filter(l => {
+        if(!l.isoTime) return true;
+        const t = new Date(l.isoTime).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+        return t >= auditFromTime;
+      })
+    : logs;
+
+  if(!filteredLogs.length) {
+    fullTbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text3)">No entries from ' + (auditFromTime||'start') + ' yet. Click "All day" to see everything.</td></tr>';
   } else {
-    fullTbody.innerHTML=[...logs].sort((a,b)=>b.id-a.id).map(l=>{
+    fullTbody.innerHTML=[...filteredLogs].sort((a,b)=>b.id-a.id).map(l=>{
       const netC=l.net==='stable'?'var(--green)':l.net==='dropping'?'var(--red)':'var(--amber)';
       const focC=l.focus<=2?'var(--red)':l.focus>=4?'var(--green)':'var(--amber)';
       const proofOk=l.proof&&l.proof.length>15;
@@ -12893,6 +12914,239 @@ window.dbInit().then(() => {
   renderDashProdKPIs();
   renderDashPerfChart();
 }).catch(() => checkSession());
+
+// ════════════════════════════════════════════════════════════════
+// AUTO-FILL DAILY REPORT FROM PRODUCTION DATA + EXTENSION LOGS
+// ════════════════════════════════════════════════════════════════
+
+async function autoFillDRFromProd() {
+  const today_str = today();
+
+  // Get today's production data
+  const allProd = load('prod');
+  const todayProd = allProd.filter(p => p.date === today_str);
+
+  // Get today's WFH logs (from extension — live submissions)
+  let wfhLogs = [];
+  try {
+    const r = await fetch(_SUPA_URL + '/rest/v1/wfh_logs?date=eq.' + today_str + '&select=*', {headers: _SUPA_HDR});
+    if(r.ok) wfhLogs = await r.json();
+  } catch(e) {}
+
+  // Get errors for today
+  const allErrors = load('errors');
+  const todayErrors = allErrors.filter(e => e.date === today_str);
+
+  // Get attendance
+  const allAtt = load('attendance');
+  const todayAtt = allAtt.filter(a => a.date === today_str);
+
+  // ── Calculate Kings stats ──────────────────────────────────
+  const kingsProd = todayProd.filter(p => p.team === 'Kings');
+  const kingsCases = kingsProd.reduce((s,r) => s + (+r.cases||0), 0);
+  const kingsAHT = kingsProd.length
+    ? +(kingsProd.reduce((s,r) => s + (+r.aht||0), 0) / kingsProd.length).toFixed(2)
+    : null;
+  const kingsOcc = kingsProd.length
+    ? +(kingsProd.reduce((s,r) => s + (+r.occ||0), 0) / kingsProd.length).toFixed(2)
+    : null;
+  const kingsErrors = todayErrors.filter(e => e.team === 'Kings' || kingsProd.some(p => p.operator === e.operator));
+  const kingsAbsent = todayAtt.filter(a => a.team === 'Kings' && (a.status === 'absent' || a.status === 'leave'));
+
+  // Also check WFH logs for Kings (extension data)
+  const kingsWFH = wfhLogs.filter(l => {
+    const KINGS_OPS = ['alfred.korir','dennis.sangolo','jenipher.otieno','melody.mapenzi',
+      'pauline.safari','sila.juma','stacy.wanjiku','noah.njiri','mark.obara','collins.marigu',
+      'aisha.adhiambo','christopher.wanyama','gibson.majimbo','synthia.kaneotieno','ken.okoth',
+      'ivy.njerese','joy.mackenzie','adhiambo.vivian','dennis.keter','richard.otieno'];
+    return KINGS_OPS.some(k => l.op_id?.includes(k));
+  });
+  const kingsExtCases = kingsWFH.length
+    ? Math.max(...kingsWFH.map(l => l.cases || 0))
+    : 0;
+  const finalKingsCases = Math.max(kingsCases, kingsExtCases);
+
+  // ── Calculate SWAT stats ───────────────────────────────────
+  const swatProd = todayProd.filter(p => p.team === 'SWAT');
+  const swatCases = swatProd.reduce((s,r) => s + (+r.cases||0), 0);
+  const swatAHT = swatProd.length
+    ? +(swatProd.reduce((s,r) => s + (+r.aht||0), 0) / swatProd.length).toFixed(2)
+    : null;
+  const swatOcc = swatProd.length
+    ? +(swatProd.reduce((s,r) => s + (+r.occ||0), 0) / swatProd.length).toFixed(2)
+    : null;
+  const swatErrors = todayErrors.filter(e => e.team === 'SWAT' || swatProd.some(p => p.operator === e.operator));
+  const swatAbsent = todayAtt.filter(a => a.team === 'SWAT' && (a.status === 'absent' || a.status === 'leave'));
+
+  const swatWFH = wfhLogs.filter(l => !kingsWFH.includes(l));
+  const swatExtCases = swatWFH.length ? Math.max(...swatWFH.map(l => l.cases||0)) : 0;
+  const finalSwatCases = Math.max(swatCases, swatExtCases);
+
+  // ── Fill Kings form ────────────────────────────────────────
+  const kpfx = 'dr-kings-';
+  const kdateEl = document.getElementById(kpfx+'date');
+  if(kdateEl && !kdateEl.value) kdateEl.value = today_str;
+
+  if(finalKingsCases > 0) {
+    const kCasesEl = document.getElementById(kpfx+'cases');
+    if(kCasesEl && !kCasesEl.value) kCasesEl.value = finalKingsCases;
+  }
+  if(kingsAHT) {
+    const kAHTEl = document.getElementById(kpfx+'aht');
+    if(kAHTEl && !kAHTEl.value) kAHTEl.value = kingsAHT;
+  }
+  if(kingsErrors.length > 0) {
+    const kErrEl = document.getElementById(kpfx+'errors');
+    if(kErrEl && !kErrEl.value) kErrEl.value = kingsErrors.length;
+  }
+  if(kingsAbsent.length > 0) {
+    const kAbsEl = document.getElementById(kpfx+'absent');
+    if(kAbsEl && !kAbsEl.value) kAbsEl.value = kingsAbsent.map(a=>a.operator?.split('.')[0]||'').join(', ');
+  }
+
+  // Auto-generate Kings report summary
+  const kReportEl = document.getElementById(kpfx+'team-report');
+  if(kReportEl && !kReportEl.value && finalKingsCases > 0) {
+    const topKings = kingsProd.sort((a,b)=>b.cases-a.cases).slice(0,3).map(p=>{
+      const name = p.operator?.split('.').slice(0,2).map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' ');
+      return `${name} (${p.cases} cases, AHT ${p.aht}s)`;
+    }).join(', ');
+    kReportEl.value = `Team Kings performance for ${today_str}:
+• Total cases: ${finalKingsCases}
+• Avg AHT: ${kingsAHT||'—'}s${kingsOcc?`
+• Avg Occupancy: ${kingsOcc}%`:''}
+• Top performers: ${topKings||'—'}
+• Errors logged: ${kingsErrors.length}
+• Absentees: ${kingsAbsent.length ? kingsAbsent.map(a=>a.operator?.split('.')[0]).join(', ') : 'None'}`;
+  }
+
+  // ── Fill SWAT form ─────────────────────────────────────────
+  const spfx = 'dr-swat-';
+  const sdateEl = document.getElementById(spfx+'date');
+  if(sdateEl && !sdateEl.value) sdateEl.value = today_str;
+
+  if(finalSwatCases > 0) {
+    const sCasesEl = document.getElementById(spfx+'cases');
+    if(sCasesEl && !sCasesEl.value) sCasesEl.value = finalSwatCases;
+  }
+  if(swatAHT) {
+    const sAHTEl = document.getElementById(spfx+'aht');
+    if(sAHTEl && !sAHTEl.value) sAHTEl.value = swatAHT;
+  }
+  if(swatErrors.length > 0) {
+    const sErrEl = document.getElementById(spfx+'errors');
+    if(sErrEl && !sErrEl.value) sErrEl.value = swatErrors.length;
+  }
+  if(swatAbsent.length > 0) {
+    const sAbsEl = document.getElementById(spfx+'absent');
+    if(sAbsEl && !sAbsEl.value) sAbsEl.value = swatAbsent.map(a=>a.operator?.split('.')[0]||'').join(', ');
+  }
+
+  const sReportEl = document.getElementById(spfx+'team-report');
+  if(sReportEl && !sReportEl.value && finalSwatCases > 0) {
+    const topSwat = swatProd.sort((a,b)=>b.cases-a.cases).slice(0,3).map(p=>{
+      const name = p.operator?.split('.').slice(0,2).map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' ');
+      return `${name} (${p.cases} cases, AHT ${p.aht}s)`;
+    }).join(', ');
+    sReportEl.value = `Team SWAT performance for ${today_str}:
+• Total cases: ${finalSwatCases}
+• Avg AHT: ${swatAHT||'—'}s${swatOcc?`
+• Avg Occupancy: ${swatOcc}%`:''}
+• Top performers: ${topSwat||'—'}
+• Errors logged: ${swatErrors.length}
+• Absentees: ${swatAbsent.length ? swatAbsent.map(a=>a.operator?.split('.')[0]).join(', ') : 'None'}`;
+  }
+
+  // ── Fill Whole Team form (TL only) ─────────────────────────
+  if(currentRole === 'tl' || currentRole === 'admin') {
+    const tpfx = 'dr-team-';
+    const tdateEl = document.getElementById(tpfx+'date');
+    if(tdateEl && !tdateEl.value) tdateEl.value = today_str;
+
+    const totalCases = finalKingsCases + finalSwatCases;
+    const allAHT = todayProd.length
+      ? +(todayProd.reduce((s,r)=>s+(+r.aht||0),0)/todayProd.length).toFixed(2)
+      : null;
+    const allOcc = todayProd.length
+      ? +(todayProd.reduce((s,r)=>s+(+r.occ||0),0)/todayProd.length).toFixed(2)
+      : null;
+
+    if(totalCases > 0) {
+      const tCasesEl = document.getElementById(tpfx+'cases');
+      if(tCasesEl && !tCasesEl.value) tCasesEl.value = totalCases;
+    }
+    if(allAHT) {
+      const tAHTEl = document.getElementById(tpfx+'aht');
+      if(tAHTEl && !tAHTEl.value) tAHTEl.value = allAHT;
+    }
+    if(allOcc) {
+      const tOccEl = document.getElementById(tpfx+'occ');
+      if(tOccEl && !tOccEl.value) tOccEl.value = allOcc;
+    }
+    const tErrEl = document.getElementById(tpfx+'errors');
+    if(tErrEl && !tErrEl.value) tErrEl.value = todayErrors.length;
+  }
+
+  const filledCount = [finalKingsCases, finalSwatCases].filter(v=>v>0).length;
+  if(filledCount > 0) {
+    toast('📋 Report auto-filled from today's data', '✅');
+  }
+}
+
+// ── Auto-save daily report at end of shift (called by scheduler) ──
+async function autoSaveDailyReport() {
+  const today_str = today();
+  const allProd   = load('prod');
+  const todayProd = allProd.filter(p => p.date === today_str);
+  if(!todayProd.length) return; // no data to save
+
+  const SECTIONS = currentRole==='tl'||currentRole==='admin'
+    ? ['kings','swat','team']
+    : currentRole==='kings' ? ['kings']
+    : currentRole==='swat'  ? ['swat']
+    : [];
+
+  for(const section of SECTIONS) {
+    // Check if already saved today
+    const existing = load('dr_entries');
+    const alreadySaved = existing.find(e => e.date === today_str && e.section === section);
+    if(alreadySaved) continue; // don't overwrite manual entries
+
+    // Fill the form then save
+    await autoFillDRFromProd();
+    await new Promise(r => setTimeout(r, 300));
+
+    // Only auto-save if form has data
+    const pfx = 'dr-' + section + '-';
+    const cases = document.getElementById(pfx+'cases')?.value;
+    if(cases && parseInt(cases) > 0) {
+      await saveDRSection(section);
+      console.log(`✅ Auto-saved ${section} daily report for ${today_str}`);
+    }
+  }
+}
+
+// ── Schedule auto-save at shift end (18:00 and 18:30) ─────────────
+function scheduleAutoSave() {
+  const now  = new Date();
+  const h    = now.getHours();
+  const m    = now.getMinutes();
+  const SAVE_TIMES = [[18,0],[18,30],[19,0]];
+
+  SAVE_TIMES.forEach(([sh, sm]) => {
+    const msTill = ((sh - h) * 60 + (sm - m)) * 60000;
+    if(msTill > 0 && msTill < 3600000 * 4) { // within 4 hours ahead
+      setTimeout(async () => {
+        console.log(`⏰ Auto-save triggered at ${sh}:${String(sm).padStart(2,'0')}`);
+        await autoSaveDailyReport();
+        toast('📋 Daily report auto-saved for today', '✅');
+      }, msTill);
+    }
+  });
+}
+
+// Start scheduler when hub loads
+if(typeof today === 'function') scheduleAutoSave();
 
 // ── Filter clear helpers (avoids quote-escaping issues in innerHTML) ──
 function clearDPFilter() {
