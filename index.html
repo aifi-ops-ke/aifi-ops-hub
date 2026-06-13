@@ -4207,7 +4207,14 @@ function doWFHLogin() {
     return;
   }
 
-  // ✅ Auth passed — go to WFH operator station
+  // ✅ Password correct — now check if operator is approved for today
+  const approvedToday = _approvedCache || [];
+  if(approvedToday.length > 0 && !approvedToday.includes(opId)) {
+    errEl.textContent = '🔒 You are not approved for WFH today. Contact your Team Lead.';
+    errEl.style.display = 'block';
+    return;
+  }
+
   errEl.style.display = 'none';
   closeWFHLogin();
 
@@ -7590,7 +7597,8 @@ function renderWFHMonitor() {
     return 'online';
   }
 
-  const allOps    = Object.keys(sessions);
+  // ONLY show approved operators — unapproved never appear in monitor
+  const allOps    = approved.length ? Object.keys(sessions).filter(id=>approved.includes(id)) : Object.keys(sessions);
   const onlineOps = allOps.filter(id=>opStatus(id)==='online');
   const breakOps  = allOps.filter(id=>opStatus(id)==='break');
   // idleOps = operators where cursor/cam system set status='idle' in Supabase
@@ -7977,12 +7985,12 @@ function wfhCheckIn() {
                  shift, location, preInternet:internet, preEnv:env, prePower:power,
                  preTools:tools, workspace, breakCount:0, noCam };
   saveSession(today(), opId, sess);
-  // Auto-approve for WFH on check-in
-  fetch(_SUPA_URL+'/rest/v1/wfh_approved', {
-    method:'POST',
-    headers:{...(typeof WFH_HDR!=='undefined'?WFH_HDR:{'apikey':_SUPA_KEY,'Authorization':'Bearer '+_SUPA_KEY,'Content-Type':'application/json'}),'Prefer':'resolution=merge-duplicates'},
-    body: JSON.stringify({op_id:opId, date:today(), approved_by:'auto'})
-  }).catch(()=>{});
+  // NO auto-approve — TL must explicitly approve via the approval panel
+  // Check operator IS approved before allowing check-in
+  if(_approvedCache.length > 0 && !_approvedCache.includes(opId)) {
+    toast('🔒 You are not approved for WFH today. Contact ' + (currentName||'your Team Lead') + '.', '❌');
+    return;
+  }
   _wfhSessionStart = now; _wfhTotalBreak = 0; _wfhOnBreak = false;
 
   const envFlag = (env==='unsuitable') ? ' ⚠️ UNSUITABLE ENVIRONMENT' : '';
