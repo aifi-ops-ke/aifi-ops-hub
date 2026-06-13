@@ -7011,24 +7011,26 @@ async function dbGetSessions(date) {
     const out = {};
     rows.forEach(row => {
       out[row.op_id] = {
-        status:       row.status,
-        checkIn:      row.check_in,
-        checkOut:     row.check_out,
-        shift:        row.shift,
-        location:     row.location,
-        device:       row.device,
-        totalCases:   row.total_cases,
-        totalBreakMs: row.total_break_ms,
-        lastAHT:      row.last_aht,
-        lastFocus:    row.last_focus,
-        lastEnergy:   row.last_energy,
-        breakCount:   row.break_count,
-        preInternet:  row.pre_internet,
-        preEnv:       row.pre_env,
-        prePower:     row.pre_power,
-        preTools:     row.pre_tools,
-        workspace:    row.workspace,
-        totalHours:   row.total_hours,
+        status:        row.status,
+        checkIn:       row.check_in,
+        checkOut:      row.check_out,
+        shift:         row.shift,
+        location:      row.location,
+        device:        row.device,
+        totalCases:    row.total_cases,
+        totalBreakMs:  row.total_break_ms,
+        lastAHT:       row.last_aht,
+        lastFocus:     row.last_focus,
+        lastEnergy:    row.last_energy,
+        breakCount:    row.break_count,
+        preInternet:   row.pre_internet,
+        preEnv:        row.pre_env,
+        prePower:      row.pre_power,
+        preTools:      row.pre_tools,
+        workspace:     row.workspace,
+        totalHours:    row.total_hours,
+        lastHeartbeat: row.last_heartbeat,  // ← CRITICAL: was missing!
+        anydesk:       row.anydesk_id,
       };
     });
     return out;
@@ -7592,7 +7594,16 @@ function renderWFHMonitor() {
   // Determine status incl. idle detection
   function opStatus(id) {
     const s = sessions[id];
-    if(!s || !s.checkIn) return 'offline';
+    // Check if operator has recent logs (from extension) even without a session
+    if(!s || !s.checkIn) {
+      const recentLog = logs.filter(l=>l.opId===id).sort((a,b)=>b.id-a.id)[0];
+      if(recentLog) {
+        const minsAgo = (Date.now() - new Date(recentLog.isoTime||Date.now()).getTime()) / 60000;
+        if(minsAgo < 30) return 'online';  // recent log = still working
+        if(minsAgo < 120) return 'idle';   // older log = idle
+      }
+      return 'offline';
+    }
     if(s.checkOut)              return 'logged_out';
     if(s.status === 'logged_out') return 'logged_out';
     if(s.status === 'offline')  return 'logged_out';
@@ -7605,13 +7616,19 @@ function renderWFHMonitor() {
     // Heartbeat stale check — no ping in 5+ min = not actually online
     if(s.lastHeartbeat) {
       const mins = (Date.now() - new Date(s.lastHeartbeat).getTime()) / 60000;
-      if(mins > 5) return 'logged_out';
+      if(mins > 10) return 'idle';   // >10 min no heartbeat = idle (not logged out)
+      if(mins > 20) return 'logged_out'; // >20 min = truly gone
     }
     return 'online';
   }
 
-  // ONLY show approved operators — unapproved never appear in monitor
-  const allOps    = approved.length ? Object.keys(sessions).filter(id=>approved.includes(id)) : Object.keys(sessions);
+  // Show approved operators + anyone with logs today (extension users)
+  const logOps  = [...new Set(logs.map(l=>l.opId).filter(Boolean))];
+  const sessOps = Object.keys(sessions);
+  const mergedOps = [...new Set([...sessOps, ...logOps])];
+  const allOps = approved.length
+    ? mergedOps.filter(id => approved.includes(id))
+    : mergedOps;
   const onlineOps = allOps.filter(id=>opStatus(id)==='online');
   const breakOps  = allOps.filter(id=>opStatus(id)==='break');
   // idleOps = operators where cursor/cam system set status='idle' in Supabase
